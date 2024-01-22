@@ -1,0 +1,10 @@
+git
+vim
+nano
+curl
+wget
+less
+openssh-client
+openssh-server
+openssh-sftp-server
+network-manager
