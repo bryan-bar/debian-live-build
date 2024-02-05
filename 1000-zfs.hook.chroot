@@ -9,4 +9,4 @@ apt-get install --yes debootstrap gdisk dkms dpkg-dev
 # Install zfs-dkms before zfsutils-linux/zfs-zed so that the kernal is reconfigured
 apt-get install --yes -t bookworm-backports --no-install-recommends zfs-dkms
 # Backports contains patches 1.1.14/2.2.2
-apt-get install --yes -t bookworm-backport zfs-zed zfsutils-linux
+apt-get install --yes -t bookworm-backports zfs-zed zfsutils-linux
