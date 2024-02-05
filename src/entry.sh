@@ -21,7 +21,7 @@ lb config \
 	--archive-areas "main contrib non-free non-free-firmware" \
 	--linux-packages "linux-image linux-headers" \
 	--backports true \
-	--bootappend-live "boot=live" \
+	--bootappend-live "boot=live nomodeset toram" \
 	--memtest "memtest86+" \
 	--bootloaders "grub-efi" \
 	--security true \
@@ -34,6 +34,9 @@ lb config \
 # Copy configuration files
 cp "$SOURCE_DIR/packages.list.chroot" "config/package-lists/"
 cp "$SOURCE_DIR/1000-zfs.hook.chroot" "config/hooks/live/"
+cp "$SOURCE_DIR/1001-ddrescue.hook.chroot" "config/hooks/live/"
+cp "$SOURCE_DIR/1002-tools.hook.chroot" "config/hooks/live/"
+cp "$SOURCE_DIR/1003-monitor.hook.chroot" "config/hooks/live/"
 
 # lb build - wget randomly fails to fetch deb.debian.org
 # It might be related to a disconnect setting which forces a new connection after 100 connections, which wget respects
@@ -51,3 +54,5 @@ mv ${ISO_NAME} ${SCRIPT_DIR}/
 lb clean --purge
 cd ${SCRIPT_DIR}
 rm -r ${TEMP_DIR}
+
+echo "$SCRIPT_DIR/$ISO_NAME"

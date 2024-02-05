@@ -1,0 +1,23 @@
+#!/bin/sh
+
+set -eou
+
+VERSION="1.28"
+FILE="ddrescue-$VERSION"
+
+apt-get update --yes
+apt-get upgrade --yes
+apt-get install --yes \
+    btrfs-progs \
+    cryptsetup \
+    lvm2 \
+    mdadm \
+    bcache-tools \
+    smartmontools \
+    nvme-cli \
+    gparted \
+    parted \
+    rasdaemon \
+    rsync \
+    testdisk
+

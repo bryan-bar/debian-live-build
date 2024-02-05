@@ -1,0 +1,18 @@
+#!/bin/sh
+
+set -eou
+
+VERSION="1.28"
+FILE="ddrescue-$VERSION"
+
+apt-get update --yes
+apt-get upgrade --yes
+apt-get install --yes tar lzip build-essential
+curl http://ftp.gnu.org/gnu/ddrescue/$FILE.tar.lz --output $FILE.tar.lz
+lzip -d $FILE.tar.lz
+tar xvf $FILE.tar
+cd $FILE
+./configure
+make
+make check
+make install-compress
