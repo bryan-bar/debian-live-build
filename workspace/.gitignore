@@ -1,0 +1,6 @@
+# Ignore the directory contents
+# Script workspace
+
+*
+!.gitignore
+

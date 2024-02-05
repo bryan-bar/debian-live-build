@@ -1,5 +1,7 @@
 #!/bin/bash
 set -eou
+[ "${DEBUG:=false}" == 'true' ] && set -x && exec 6>&1 && exec 1>&2
+
 # when using containers,
 # access to chroot is needed
 # this usually means --priviledged option or specifying SYS_CHROOT permissions
@@ -7,6 +9,10 @@ set -eou
 SOURCE_DIR="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"
 TEMP_DIR="/tmp/live-build-debian"
 ISO_NAME="live-image-amd64.hybrid.iso"
+DEBIAN_FRONTEND=noninteractive
+
+apt-get clean
+apt-get update
 apt-get install --yes live-build
 
 mkdir "$TEMP_DIR"
@@ -50,9 +56,13 @@ lb chroot --verbose
 lb installer --verbose
 lb binary --verbose
 lb source --verbose
-mv ${ISO_NAME} ${SCRIPT_DIR}/
+mv "${ISO_NAME}" "${SOURCE_DIR}"
 lb clean --purge
-cd ${SCRIPT_DIR}
-rm -r ${TEMP_DIR}
+cd "${SOURCE_DIR}"
+rm -r "${TEMP_DIR}"
 
-echo "$SCRIPT_DIR/$ISO_NAME"
+[ "${DEBUG:=false}" == 'true' ] && exec 1>&6 && exec 6>&-
+
+# return success output as the last line
+printf "\n%s\n" "$SOURCE_DIR/$ISO_NAME" 
+
