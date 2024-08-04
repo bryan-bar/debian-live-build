@@ -2,11 +2,23 @@
 
 set -eou
 
+apt-mark hold linux-image-amd64
 apt-get update --yes
-apt-get upgrade --yes
-apt-get install --yes initramfs-tools
-apt-get install --yes debootstrap gdisk dkms dpkg-dev
-# Install zfs-dkms before zfsutils-linux/zfs-zed so that the kernal is reconfigured
-apt-get install --yes -t bookworm-backports --no-install-recommends zfs-dkms
-# Backports contains patches 1.1.14/2.2.2
-apt-get install --yes -t bookworm-backports zfs-zed zfsutils-linux
+apt-get install --yes initramfs-tools linux-headers-amd64 linux-headers-generic firmware-linux firmware-linux-nonfree amd64-microcode firmware-realtek 
+apt-get install --yes cryptsetup lvm2 vim gdisk parted gparted 
+apt-get install --yes debootstrap gdisk dkms dpkg-dev 
+# Install zfs-dkms before zfsutils-linux/zfs-zed so that the kernal is reconfigured 
+apt-get install --yes --no-install-recommends zfs-dkms 
+# Backports contains patches 1.1.14 or 2.2.2 w/ -t bookworm-backports 
+apt-get install --yes  zfs-zed zfsutils-linux
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
+~                                                                                                                                                                                           
