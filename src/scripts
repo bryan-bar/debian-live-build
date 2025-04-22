@@ -1,14 +1,22 @@
 #!/bin/bash
 set -eoux pipefail
 # Modified from this guide: https://github.com/openzfs/openzfs-docs/blob/master/docs/Getting%20Started/Debian/Debian%20Bookworm%20Root%20on%20ZFS.rst
+DISK=${1} # make use of /dev/disk/by-id/<PATH> or other reliable hardware ids
+ROOT_SIZE=${2}
+HOSTNAME=${3}
 
 DISTRO="trixie"
 BOOT_POOL="bpool"
 ROOT_POOL="rpool"
 MOUNT_POINT="/mnt"
-DISK=${1} # make use of /dev/disk/by-id/<PATH> or other reliable hardware ids
-ROOT_SIZE=${2}
-HOSTNAME=${3}
+UEFI_PART=1
+BOOT_PART=2
+CRYPT_PART=3
+CRYPT_NAME="crypt-root"
+
+BOOT_SERVICE="zfs-import-bpool.service"
+CHROOT_SETUP_SCRIPT="/tmp/setup.sh"
+SETUP_SCRIPT="${MOUNT_POINT}${CHROOT_SETUP_SCRIPT}"
 
 # Update sources list
 APT_LOCATION="deb http://deb.debian.org/debian ${DISTRO} main contrib non-free non-free-firmware"
@@ -36,16 +44,13 @@ sgdisk --zap-all "$DISK"
 # sg -a1 -n1:24K:+100K -t1:EF02 "$DISK"
 
 # UEFI booting, only +512M needed but don't want to deal with space later if needed
-UEFI_PART=1
 sgdisk -n 1:1M:+2G -t 1:EF00 -c 1:"UEFI" "$DISK"
 # Create partition for boot pool
-BOOT_PART=2
 sgdisk -n 2:0:+2G -t 2:BF01 -c 2:"Boot pool" "$DISK"
 # Create root pool
 # Unencrypted or ZFS native partition
 #sgdisk -n 3:0:0 -t3:BF00 "$DISK"
 # LUKS encryption partition
-CRYPT_PART=3
 sgdisk -n 3:0:${ROOT_SIZE} -t 3:8309 -c 3:"LUKS Root pool" "$DISK"
 
 # Create boot pool and repeat for mirrors/raidz disks
@@ -76,7 +81,7 @@ apt install --yes cryptsetup
 echo "Create disk, set the password:"
 cryptsetup luksFormat -c aes-xts-plain64 -s 512 -h sha256 ${DISK}-part${CRYPT_PART}
 echo "Device created, open encrypted device:"
-cryptsetup luksOpen ${DISK}-part${CRYPT_PART} crypt-root
+cryptsetup luksOpen ${DISK}-part${CRYPT_PART} ${CRYPT_NAME}
 # Create root pool
 # ashift=12 used in most cases since most disks use 4KiB even if presented as 512B sectores and to avoid resizing in the future from 512B -> 4096B
 zpool create \
@@ -87,7 +92,7 @@ zpool create \
     -O normalization=formD \
     -O relatime=on \
     -O canmount=off -O mountpoint=/ -R "${MOUNT_POINT}" \
-    ${ROOT_POOL} /dev/mapper/crypt-root
+    ${ROOT_POOL} /dev/mapper/${CRYPT_NAME}
 
 # Add any root mirrors/raid
 #zpool create \
@@ -162,8 +167,11 @@ do
   mkdir -p "${MOUNT_POINT}${i}"
   mount --make-private --rbind "${i}" "${MOUNT_POINT}${i}" 
 done
-chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash --login
 
+# Copy setup script and chroot
+cat << EOF > "${SETUP_SCRIPT}"
+#!/bin/bash
+set -eoux pipefail
 # Setup locales 'en_US.UTF-8'
 apt-get update
 apt-get install --yes console-setup locales
@@ -177,7 +185,7 @@ echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 # Install LUKS and initramfs is used as a workaround to support cryptsetup with ZFS
 apt-get install --yes cryptsetup cryptsetup-initramfs
 # Must be repeated for each mirror/raid, ensure unique names with numbering as needed
-echo crypt-root0 /dev/disk/by-uuid/$(blkid -s UUID -o value ${DISK}-part${CRYPT_PART}) \
+echo ${CRYPT_NAME} /dev/disk/by-uuid/$(blkid -s UUID -o value ${DISK}-part${CRYPT_PART}) \
     none luks,discard,initramfs > /etc/crypttab
 
 # Install NTP service to sync time, required for bookworm after bootstrap, unsure of trixie changes
@@ -197,7 +205,6 @@ apt-get install --yes grub-efi-amd64 shim-signed
 apt purge --yes os-prober # remove unless needed for dual booting
 
 # import boot pool in ase zpool cache does not not exist or in case the zfs import service is disabled
-BOOT_SERVICE="zfs-import-bpool.service"
 printf '%s\n' "[Unit]
 DefaultDependencies=no
 Before=zfs-import-scan.service
@@ -207,7 +214,7 @@ Before=zfs-import-cache.service
 Type=oneshot
 RemainAfterExit=yes
 # May require -d DISK_BY_PATH/ROOT_PARTITION
-ExecStart=/sbin/zpool import -N -o cachefile=none -d ${DISK}-part${ROOT_PART} ${BOOT_POOL}
+ExecStart=/sbin/zpool import -N -o cachefile=none -d ${DISK}-part${CRYPT_PART} ${BOOT_POOL}
 # Work-around to preserve zpool cache:
 ExecStartPre=-/bin/mv /etc/zfs/zpool.cache /etc/zfs/preboot_zpool.cache
 ExecStartPost=-/bin/mv /etc/zfs/preboot_zpool.cache /etc/zfs/zpool.cache
@@ -217,6 +224,81 @@ WantedBy=zfs-import.target" > /etc/systemd/system/${BOOT_SERVICE}
 systemctl enable ${BOOT_SERVICE}
 
 
-
 echo "Set a password for root:"
 passwd
+
+EOF
+
+chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash "${CHROOT_SETUP_SCRIPT}"
+
+# Setup grub
+cat << EOF > "${SETUP_SCRIPT}"
+#!/bin/bash
+set -eoux pipefail
+# Check if boot is recognized as zfs
+grub-probe /boot
+# Update initrd
+# Ignore could resolve/determine device
+update-initramfs -c -k all
+# Update grub due to missing zpool-features
+grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub \
+  && sed -i 's|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX="root=ZFS=${ROOT_POOL}/ROOT/debian"|' /etc/default/grub \
+  || echo 'GRUB_CMDLINE_LINUX="root=ZFS=${ROOT_POOL}/ROOT/debian"' >> /etc/default/grub
+update-grub
+
+# Grub is installed onto each partition so repeat for each disk but not specified by disk for mirror/raidz
+# Bios booting
+#grub-install ${DISK}
+# UEFI booting
+grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+    --bootloader-id=debian --recheck --no-floppy
+
+# Activate zfs-mount-generator to ensure proper filesystem ordering for systemd
+mkdir -p /etc/zfs/zfs-list.cache
+touch "/etc/zfs/zfs-list.cache/${ROOT_POOL}"
+touch "/etc/zfs/zfs-list.cache/${BOOT_POOL}"
+zed -F &
+
+# Verify zed update the cache
+# Force update if needed
+# stop and start zed with `fg` to try again
+if (( $(cat "/etc/zfs/zfs-list.cache/${BOOT_POOL}" | wc --words)  == 0 ))
+then
+    zfs set canmount=on "${BOOT_POOL}/BOOT/debian"
+fi
+if (( $(cat "/etc/zfs/zfs-list.cache/${ROOT_POOL}" | wc --words)  == 0 ))
+then
+    zfs set canmount=noauto "${ROOT_POOL}/ROOT/debian"
+fi
+
+# Remove mountpoint from cache
+sed -Ei "s|${MOUNT_POINT}/" /etc/zfs/zfs-list.cache/*
+
+# Create an initial snapshot
+zfs snapshot "${BOOT_POOL}/BOOT/debian@install"
+zfs snapshot "${ROOT_POOL}/ROOT/debian@install"
+
+EOF
+
+chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash "${CHROOT_SETUP_SCRIPT}"
+
+# Install any needed tools
+cat << EOF > "${SETUP_SCRIPT}"
+#!/bin/bash
+set -eoux pipefail
+apt-get update
+apt-get install firmware-iwlwifi firmware-linux firmware-linux-free firmware-linux-nonfree
+apt-get install network-manager
+EOF
+
+chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash "${CHROOT_SETUP_SCRIPT}"
+
+# Unmount filesystem
+mount | grep -v zfs | tac | awk "/\${MOUNT_POINT}/ {print $3}" | \
+    xargs -i {} umount -lf {}
+zpool export -a
+# Force kill remaining processes
+grep [p]ool /[proc/*/mounts | cut -d / -f 3 | uniq | xargs kill
+zpool export -a
+printf "If still busy, it will fail to boot\n"
+printf "During initramfs will require 'zpool import -f %s'\n" "${ROOT_POOL}"
