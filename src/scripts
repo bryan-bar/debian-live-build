@@ -36,13 +36,14 @@ sgdisk --zap-all "$DISK"
 # sg -a1 -n1:24K:+100K -t1:EF02 "$DISK"
 
 # UEFI booting, only +512M needed but don't want to deal with space later if needed
+UEFI_PART=1
 sgdisk -n 1:1M:+2G -t 1:EF00 -c 1:"UEFI" "$DISK"
 # Create partition for boot pool
 BOOT_PART=2
 sgdisk -n 2:0:+2G -t 2:BF01 -c 2:"Boot pool" "$DISK"
 # Create root pool
 # Unencrypted or ZFS native partition
-#sgdisk -n3:0:0 -t3:BF00 "$DISK"
+#sgdisk -n 3:0:0 -t3:BF00 "$DISK"
 # LUKS encryption partition
 CRYPT_PART=3
 sgdisk -n 3:0:${ROOT_SIZE} -t 3:8309 -c 3:"LUKS Root pool" "$DISK"
@@ -60,7 +61,7 @@ zpool create \
     -O compression=lz4 \
     -O normalization=formD \
     -O relatime=on \
-    -O canmount=off -O mountpoint=/boot -R /mnt \
+    -O canmount=off -O mountpoint=/boot -R "${MOUNT_POINT}" \
     ${BOOT_POOL} ${DISK}-part${BOOT_PART}
 
 # Create the zpool boot mirror and reuse the existing pool name
@@ -72,8 +73,10 @@ zpool create \
 
 # Encrypt root partition
 apt install --yes cryptsetup
+echo "Create disk, set the password:"
 cryptsetup luksFormat -c aes-xts-plain64 -s 512 -h sha256 ${DISK}-part${CRYPT_PART}
-cryptsetup luksOpen ${DISK}-part${CRYPT_PART} luks1
+echo "Device created, open encrypted device:"
+cryptsetup luksOpen ${DISK}-part${CRYPT_PART} crypt-root
 # Create root pool
 # ashift=12 used in most cases since most disks use 4KiB even if presented as 512B sectores and to avoid resizing in the future from 512B -> 4096B
 zpool create \
@@ -163,7 +166,54 @@ apt-get update
 apt-get install --yes console-setup locales
 dpkg-reconfigure locales tzdata keyboard-configuration console-setup
 
-# Install zfs
+# Install zfs and ignore error message since cryptsetup does not support zfs
 apt-get install --yes dpkg-dev linux-headers-generic linux-image-generic
 apt-get install --yes zfs-initramfs
 echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
+
+# Install LUKS and initramfs is used as a workaround to support cryptsetup with ZFS
+apt-get install --yes cryptsetup cryptsetup-initramfs
+# Must be repeated for each mirror/raid, ensure unique names with numbering as needed
+echo crypt-root0 /dev/disk/by-uuid/$(blkid -s UUID -o value ${DISK}-part${CRYPT_PART}) \
+    none luks,discard,initramfs > /etc/crypttab
+
+# Install NTP service to sync time, required for bookworm after bootstrap, unsure of trixie changes
+apt-get install systemd-timesyncd
+
+# Install grub
+#apt-get install --yes grub-pc # legacy grub
+# UEFI grub onto a single device, mirrors/raid handle separately
+# '-s 1' option only needed for drives presenting as 4 KiB while using a size of 512MiB with FAT32
+apt-get install dosfstools
+mkdosfs -F 32 -s 1 -n EFI "${DISK}-part${UEFI_PART}"
+mkdir /boot/efi
+echo /dev/disk/by-uuid/$(blkid -s UUID -o value "${DISK}-part${UEFI_PART}") \
+   /boot/efi vfat defaults 0 0 >> /etc/fstab
+mount /boot/efi
+apt-get install --yes grub-efi-amd64 shim-signed
+apt purge --yes os-prober # remove unless needed for dual booting
+
+# import boot pool in ase zpool cache does not not exist or in case the zfs import service is disabled
+BOOT_SERVICE="zfs-import-bpool.service"
+printf '%s\n' "[Unit]
+DefaultDependencies=no
+Before=zfs-import-scan.service
+Before=zfs-import-cache.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# May require -d DISK_BY_PATH/ROOT_PARTITION
+ExecStart=/sbin/zpool import -N -o cachefile=none -d ${DISK}-part${ROOT_PART} ${BOOT_POOL}
+# Work-around to preserve zpool cache:
+ExecStartPre=-/bin/mv /etc/zfs/zpool.cache /etc/zfs/preboot_zpool.cache
+ExecStartPost=-/bin/mv /etc/zfs/preboot_zpool.cache /etc/zfs/zpool.cache
+
+[Install]
+WantedBy=zfs-import.target" > /etc/systemd/system/${BOOT_SERVICE}
+systemctl enable ${BOOT_SERVICE}
+
+
+
+echo "Set a password for root:"
+passwd
