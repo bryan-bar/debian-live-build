@@ -1,18 +1,18 @@
 #!/bin/bash
+set -eoux pipefail
 # Modified from this guide: https://github.com/openzfs/openzfs-docs/blob/master/docs/Getting%20Started/Debian/Debian%20Bookworm%20Root%20on%20ZFS.rst
-set -eox pipeline
 
 DISTRO="trixie"
 BOOT_POOL="bpool"
 ROOT_POOL="rpool"
 MOUNT_POINT="/mnt"
-DISK=${1}
+DISK=${1} # make use of /dev/disk/by-id/<PATH> or other reliable hardware ids
 ROOT_SIZE=${2}
 HOSTNAME=${3}
 
 # Update sources list
 APT_LOCATION="deb http://deb.debian.org/debian ${DISTRO} main contrib non-free non-free-firmware"
-mv /etc/apt/sources.list.bak
+mv /etc/apt/sources.list /etc/apt/sources.list.bak
 echo "$APT_LOCATION" >> /etc/apt/sources.list
 apt update
 
@@ -104,12 +104,12 @@ zfs create -o canmount=off -o mountpoint=none ${BOOT_POOL}/BOOT
 # ZFS mount command usually not needed but required here due to 'canmount=noauto'
 zfs create -o canmount=noauto -o mountpoint=/ "${ROOT_POOL}/ROOT/debian"
 zfs mount "${ROOT_POOL}/ROOT/debian"
-zfs mount -o mountpoint=/boot "${BOOT_POOL}/ROOT/debian"
+zfs create -o mountpoint=/boot "${BOOT_POOL}/BOOT/debian"
 
 # Create any datasets depending on need and snapshot separations or exclusions
-zfs create "${ROOT_POOL}/home
+zfs create "${ROOT_POOL}/home"
 zfs create -o mountpoint=/root "${ROOT_POOL}/home/root"
-chmod "${MOUNT_POINT}/root"
+chmod 700 "${MOUNT_POINT}/root"
 zfs create -o canmount=off "${ROOT_POOL}/var"
 zfs create -o canmount=off "${ROOT_POOL}/var/lib"
 zfs create "${ROOT_POOL}/var/log"
@@ -136,8 +136,11 @@ mkdir "${MOUNT_POINT}/run"
 mount -t tmpfs tmpfs "${MOUNT_POINT}/run"
 mkdir "${MOUNT_POINT}/run/lock"
 
+# Install minimal system
+debootstrap "${DISTRO}" "${MOUNT_POINT}"
+
 # Install unconfigured system or copy existing system into root pool
-mkdir "${MOUNT_POINT}/etc/zfs"
+mkdir -p "${MOUNT_POINT}/etc/zfs"
 cp /etc/zfs/zpool.cache "${MOUNT_POINT}/etc/zfs/"
 
 # configure system
