@@ -1,0 +1,169 @@
+#!/bin/bash
+# Modified from this guide: https://github.com/openzfs/openzfs-docs/blob/master/docs/Getting%20Started/Debian/Debian%20Bookworm%20Root%20on%20ZFS.rst
+set -eox pipeline
+
+DISTRO="trixie"
+BOOT_POOL="bpool"
+ROOT_POOL="rpool"
+MOUNT_POINT="/mnt"
+DISK=${1}
+ROOT_SIZE=${2}
+HOSTNAME=${3}
+
+# Update sources list
+APT_LOCATION="deb http://deb.debian.org/debian ${DISTRO} main contrib non-free non-free-firmware"
+mv /etc/apt/sources.list.bak
+echo "$APT_LOCATION" >> /etc/apt/sources.list
+apt update
+
+# Install zfs, bootstrapping and disk formatter
+apt install --yes debootstrap gdisk zfsutils-linux
+
+# turn swap off
+swapoff --all
+
+# Wipe previous filesystem
+wipefs -a "$DISK"
+
+# Full-disk discard (TRIM/UNMAP)
+blkdiscard -f "$DISK"
+
+# Clear partition tables
+sgdisk --zap-all "$DISK"
+
+# Legacy (bios) booting requires an extra partition
+# adjust "n" if using bios boot
+# sg -a1 -n1:24K:+100K -t1:EF02 "$DISK"
+
+# UEFI booting, only +512M needed but don't want to deal with space later if needed
+sgdisk -n 1:1M:+2G -t 1:EF00 -c 1:"UEFI" "$DISK"
+# Create partition for boot pool
+BOOT_PART=2
+sgdisk -n 2:0:+2G -t 2:BF01 -c 2:"Boot pool" "$DISK"
+# Create root pool
+# Unencrypted or ZFS native partition
+#sgdisk -n3:0:0 -t3:BF00 "$DISK"
+# LUKS encryption partition
+CRYPT_PART=3
+sgdisk -n 3:0:${ROOT_SIZE} -t 3:8309 -c 3:"LUKS Root pool" "$DISK"
+
+# Create boot pool and repeat for mirrors/raidz disks
+# grub2 compatability does not support all zpool features
+#  so it is restricted with 'compatibility' to allow root to use all zfs features
+zpool create \
+    -o ashift=12 \
+    -o autotrim=on \
+    -o compatibility=grub2 \
+    -o cachefile=/etc/zfs/zpool.cache \
+    -O devices=off \
+    -O acltype=posixacl -O xattr=sa \
+    -O compression=lz4 \
+    -O normalization=formD \
+    -O relatime=on \
+    -O canmount=off -O mountpoint=/boot -R /mnt \
+    ${BOOT_POOL} ${DISK}-part${BOOT_PART}
+
+# Create the zpool boot mirror and reuse the existing pool name
+#zpool create \
+#    ... \
+#    bpool mirror \
+#    /dev/disk/by-id/scsi-SATA_disk1-part3 \
+#    /dev/disk/by-id/scsi-SATA_disk2-part3
+
+# Encrypt root partition
+apt install --yes cryptsetup
+cryptsetup luksFormat -c aes-xts-plain64 -s 512 -h sha256 ${DISK}-part${CRYPT_PART}
+cryptsetup luksOpen ${DISK}-part${CRYPT_PART} luks1
+# Create root pool
+# ashift=12 used in most cases since most disks use 4KiB even if presented as 512B sectores and to avoid resizing in the future from 512B -> 4096B
+zpool create \
+    -o ashift=12 \
+    -o autotrim=on \
+    -O acltype=posixacl -O xattr=sa -O dnodesize=auto \
+    -O compression=lz4 \
+    -O normalization=formD \
+    -O relatime=on \
+    -O canmount=off -O mountpoint=/ -R "${MOUNT_POINT}" \
+    ${ROOT_POOL} /dev/mapper/crypt-root
+
+# Add any root mirrors/raid
+#zpool create \
+#    ... \
+#    rpool mirror \
+#    /dev/disk/by-id/scsi-SATA_disk1-part4 \
+#    /dev/disk/by-id/scsi-SATA_disk2-part4
+
+# Create filesystem dataset which acts as a data "container"
+zfs create -o canmount=off -o mountpoint=none ${ROOT_POOL}/ROOT
+zfs create -o canmount=off -o mountpoint=none ${BOOT_POOL}/BOOT
+
+# Create filesystem datasets
+# ZFS mount command usually not needed but required here due to 'canmount=noauto'
+zfs create -o canmount=noauto -o mountpoint=/ "${ROOT_POOL}/ROOT/debian"
+zfs mount "${ROOT_POOL}/ROOT/debian"
+zfs mount -o mountpoint=/boot "${BOOT_POOL}/ROOT/debian"
+
+# Create any datasets depending on need and snapshot separations or exclusions
+zfs create "${ROOT_POOL}/home
+zfs create -o mountpoint=/root "${ROOT_POOL}/home/root"
+chmod "${MOUNT_POINT}/root"
+zfs create -o canmount=off "${ROOT_POOL}/var"
+zfs create -o canmount=off "${ROOT_POOL}/var/lib"
+zfs create "${ROOT_POOL}/var/log"
+zfs create "${ROOT_POOL}/var/spool"
+
+# Remove snapshots from cache and temp direcories
+zfs create -o com.sun:auto-snapshot=false "${ROOT_POOL}/var/cache"
+zfs create -o com.sun:auto-snapshot=false "${ROOT_POOL}/var/lib/nfs"
+zfs create -o com.sun:auto-snapshot=false "${ROOT_POOL}/var/tmp"
+chmod 1777 "${MOUNT_POINT}/var/tmp"
+zfs create -o com.sun:auto-snapshot=false "${ROOT_POOL}/tmp"
+chmod 1777 "${MOUNT_POINT}/tmp"
+
+# misc directories
+#zfs create "${ROOT_POOL}/srv" # directory commonly used to serve webserver files or other services' scripts
+zfs create -o canmount=off "${ROOT_POOL}/usr"
+zfs create "${ROOT_POOL}/usr/local"
+#zfs create "${ROOT_POOL}/var/lib/AccountsService" # commonly used with GNOME GUI
+zfs create "${ROOT_POOL}/var/lib/NetworkManager" # Network Manager GUI/nmcli
+zfs create -o com.sun:auto-snapshot=false "${ROOT_POOL}/var/lib/docker" # docker manages its own datasets
+
+# Create and mount temp filesystem for 'run'
+mkdir "${MOUNT_POINT}/run"
+mount -t tmpfs tmpfs "${MOUNT_POINT}/run"
+mkdir "${MOUNT_POINT}/run/lock"
+
+# Install unconfigured system or copy existing system into root pool
+mkdir "${MOUNT_POINT}/etc/zfs"
+cp /etc/zfs/zpool.cache "${MOUNT_POINT}/etc/zfs/"
+
+# configure system
+hostname "$HOSTNAME"
+hostname > "${MOUNT_POINT}/etc/hostname"
+echo "127.0.1.1 $HOSTNAME" >> "${MOUNT_POINT}/etc/hosts"
+
+mv "${MOUNT_POINT}/etc/apt/sources.list" "${MOUNT_POINT}/etc/apt/sources.list.bak" || echo "Does not exist"
+echo "deb http://deb.debian.org/debian ${DISTRO} main contrib non-free non-free-firmware" >> "${MOUNT_POINT}/etc/apt/sources.list"
+echo "#deb-src http://deb.debian.org/debian ${DISTRO} main contrib non-free non-free-firmware" >> "${MOUNT_POINT}/etc/apt/sources.list"
+echo "#deb http://deb.debian.org/debian ${DISTRO}-security main contrib non-free non-free-firmware" >> "${MOUNT_POINT}/etc/apt/sources.list"
+echo "#deb-src http://deb.debian.org/debian ${DISTRO}-security main contrib non-free non-free-firmware" >> "${MOUNT_POINT}/etc/apt/sources.list"
+echo "#deb http://deb.debian.org/debian ${DISTRO}-updates main contrib non-free non-free-firmware" >> "${MOUNT_POINT}/etc/apt/sources.list"
+echo "#deb-src http://deb.debian.org/debian ${DISTRO}-updates main contrib non-free non-free-firmware" >> "${MOUNT_POINT}/etc/apt/sources.list"
+
+# Mount filesystem and chroot
+for i in /dev /proc /sys
+do
+  mkdir -p "${MOUNT_POINT}${i}"
+  mount --make-private --rbind "${i}" "${MOUNT_POINT}${i}" 
+done
+chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash --login
+
+# Setup locales 'en_US.UTF-8'
+apt-get update
+apt-get install --yes console-setup locales
+dpkg-reconfigure locales tzdata keyboard-configuration console-setup
+
+# Install zfs
+apt-get install --yes dpkg-dev linux-headers-generic linux-image-generic
+apt-get install --yes zfs-initramfs
+echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
