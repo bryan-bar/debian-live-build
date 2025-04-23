@@ -242,7 +242,7 @@ grub-probe /boot
 update-initramfs -c -k all
 # Update grub due to missing zpool-features
 grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub \
-  && sed -i 's|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX="root=ZFS=${ROOT_POOL}/ROOT/debian"|' /etc/default/grub \
+  && sed -i "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"root=ZFS=${ROOT_POOL}/ROOT/debian\"|" /etc/default/grub \
   || echo 'GRUB_CMDLINE_LINUX="root=ZFS=${ROOT_POOL}/ROOT/debian"' >> /etc/default/grub
 update-grub
 
