@@ -294,11 +294,11 @@ EOF
 chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash "${CHROOT_SETUP_SCRIPT}"
 
 # Unmount filesystem
-mount | grep -v zfs | tac | awk "/\${MOUNT_POINT}/ {print $3}" | \
+( mount | grep -v zfs | tac | awk "/\${MOUNT_POINT}/ {print $3}" | \
     xargs -i {} umount -lf {}
-zpool export -a
+zpool export -a ) || echo "Failed to unmount, trying force kill"
 # Force kill remaining processes
-grep [p]ool /[proc/*/mounts | cut -d / -f 3 | uniq | xargs kill
+grep [p]ool /proc/*/mounts | cut -d / -f 3 | uniq | xargs kill
 zpool export -a
 printf "If still busy, it will fail to boot\n"
 printf "During initramfs will require 'zpool import -f %s'\n" "${ROOT_POOL}"
