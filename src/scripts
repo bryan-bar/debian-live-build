@@ -198,7 +198,7 @@ apt-get install systemd-timesyncd
 apt-get install dosfstools
 mkdosfs -F 32 -s 1 -n EFI "${DISK}-part${UEFI_PART}"
 mkdir /boot/efi
-echo /dev/disk/by-uuid/$(blkid -s UUID -o value "${DISK}-part${UEFI_PART}") \
+echo /dev/disk/by-uuid/$(blkid -s UUID -o value ${DISK}-part${UEFI_PART}) \
    /boot/efi vfat defaults 0 0 >> /etc/fstab
 mount /boot/efi
 apt-get install --yes grub-efi-amd64 shim-signed
