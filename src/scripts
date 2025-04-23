@@ -261,12 +261,12 @@ zed -F &
 
 # Verify zed update the cache
 # Force update if needed
-# stop and start zed with `fg` to try again
-if (( $(cat "/etc/zfs/zfs-list.cache/${BOOT_POOL}" | wc --words)  == 0 ))
+# stop and start zed with 'fg' to try again
+if (( \$(cat "/etc/zfs/zfs-list.cache/${BOOT_POOL}" | wc --words)  == 0 ))
 then
     zfs set canmount=on "${BOOT_POOL}/BOOT/debian"
 fi
-if (( $(cat "/etc/zfs/zfs-list.cache/${ROOT_POOL}" | wc --words)  == 0 ))
+if (( \$(cat "/etc/zfs/zfs-list.cache/${ROOT_POOL}" | wc --words)  == 0 ))
 then
     zfs set canmount=noauto "${ROOT_POOL}/ROOT/debian"
 fi
