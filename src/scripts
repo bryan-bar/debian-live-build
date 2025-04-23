@@ -9,6 +9,7 @@ DISTRO="trixie"
 BOOT_POOL="bpool"
 ROOT_POOL="rpool"
 MOUNT_POINT="/mnt"
+INIT_USER="name"
 UEFI_PART=1
 BOOT_PART=2
 CRYPT_PART=3
@@ -288,7 +289,20 @@ cat << EOF > "${SETUP_SCRIPT}"
 set -eoux pipefail
 apt-get update
 apt-get install firmware-iwlwifi firmware-linux firmware-linux-free firmware-linux-nonfree
+# For easier management of wifi devices
 apt-get install network-manager
+# x11 graphics manager, drivers and xinit
+# use 'startx' to startup
+apt-get install xorg
+# i3 window manager, sets up xinit
+apt-get install i3
+# Initial web browser, requires additional setup for graphics offloading from the cpu
+apt-get install chromium
+
+# create initial user with sudo access and no initial password
+adduser --uid 1111 --disabled-password --quiet --verbose "${INIT_USER}"
+usermod --append --groups sudo "${INIT_USER}"
+passwd -d "${INIT_USER}"
 EOF
 
 chroot "${MOUNT_POINT}" /usr/bin/env DISK="${DISK}" bash "${CHROOT_SETUP_SCRIPT}"
