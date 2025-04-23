@@ -272,7 +272,7 @@ then
 fi
 
 # Remove mountpoint from cache
-sed -Ei "s|${MOUNT_POINT}/" /etc/zfs/zfs-list.cache/*
+sed -Ei "s|${MOUNT_POINT}/?|/|" /etc/zfs/zfs-list.cache/*
 
 # Create an initial snapshot
 zfs snapshot "${BOOT_POOL}/BOOT/debian@install"
