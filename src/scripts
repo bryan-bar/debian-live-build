@@ -335,8 +335,16 @@ cat << EOL > /etc/docker/daemon.json
 }
 EOL
 
-# Add initial user to docker group
 adduser "${INIT_USER}" docker
+
+# Setup incus
+apt-get install incus
+adduser "${INIT_USER}" incus
+
+# Setup KVM/QEMU/Libvirt
+apt-get install qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virt-manager qemu-guest-agent
+adduser "${INIT_USER}" kvm
+adduser "${INIT_USER}" libvirt
 
 EOF
 
