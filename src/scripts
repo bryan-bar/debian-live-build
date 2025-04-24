@@ -180,11 +180,15 @@ dpkg-reconfigure locales tzdata keyboard-configuration console-setup
 
 # Install zfs and ignore error message since cryptsetup does not support zfs
 apt-get install --yes dpkg-dev linux-headers-generic linux-image-generic
+apt-mark hold linux-headers-*
+apt-mark hold linux-image-*
 apt-get install --yes zfs-initramfs
+apt-mark hold zfs*
 echo REMAKE_INITRD=yes > /etc/dkms/zfs.conf
 
 # Install LUKS and initramfs is used as a workaround to support cryptsetup with ZFS
 apt-get install --yes cryptsetup cryptsetup-initramfs
+apt-mark hold cryptsetup*
 # Must be repeated for each mirror/raid, ensure unique names with numbering as needed
 echo ${CRYPT_NAME} /dev/disk/by-uuid/$(blkid -s UUID -o value ${DISK}-part${CRYPT_PART}) \
     none luks,discard,initramfs > /etc/crypttab
@@ -204,6 +208,7 @@ echo /dev/disk/by-uuid/$(blkid -s UUID -o value ${DISK}-part${UEFI_PART}) \
 mount /boot/efi
 apt-get install --yes grub-efi-amd64 shim-signed
 apt purge --yes os-prober # remove unless needed for dual booting
+apt-mark grub*
 
 # import boot pool in ase zpool cache does not not exist or in case the zfs import service is disabled
 printf '%s\n' "[Unit]
@@ -294,8 +299,11 @@ apt-get install network-manager
 # x11 graphics manager, drivers and xinit
 # use 'startx' to startup
 apt-get install xorg
+apt-mark hold xorg*
+apt-mark hold xserver*
 # i3 window manager, sets up xinit
 apt-get install i3
+apt-mark hold i3*
 # Initial web browser, requires additional setup for graphics offloading from the cpu
 apt-get install chromium
 
